@@ -1,0 +1,27 @@
+name: rollback
+
+# Regreso manual a la versión inmediatamente anterior de un entorno.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Entorno a revertir
+        type: choice
+        options: [staging, production]
+        required: true
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  rollback:
+    name: Rollback en ${{ inputs.environment }}
+    runs-on: [self-hosted, "${{ inputs.environment }}"]
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login al registro
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - run: scripts/deploy/rollback.sh "${{ inputs.environment }}"

@@ -1,0 +1,37 @@
+# Alertas derivadas de los SLO (docs/DOCUMENTO.md, sección 4).
+groups:
+  - name: talaverashop-slo
+    rules:
+      - alert: AppCaida
+        expr: up{job="talaverashop-app"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          resumen: "La aplicación no responde al scraping desde hace 1 minuto"
+
+      - alert: TasaDeErroresAlta
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1e-9) > 0.01
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          resumen: "Más de 1% de respuestas 5xx en 5 min (SLO de disponibilidad 99.5%)"
+
+      - alert: LatenciaP95Alta
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 0.3
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          resumen: "p95 de latencia por encima de 300 ms durante 5 min"
+
+      - alert: PresupuestoDeErrorQuemandoRapido
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[1h]))
+            / clamp_min(sum(rate(http_requests_total[1h])), 1e-9)) > (14.4 * 0.005)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          resumen: "Consumo del presupuesto de error 14.4x más rápido de lo permitido"

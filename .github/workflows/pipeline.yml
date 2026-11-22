@@ -1,0 +1,146 @@
+name: pipeline
+
+# CI en cada PR; CI + CD completo en cada push a main.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Una sola ejecución por rama; en PR se cancela la anterior, en main se encola
+# para no interrumpir un despliegue a medias.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------- 1. CI
+  ci:
+    name: CI (lint + pruebas unitarias)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: scripts/pipeline/ci.sh
+
+  # ------------------------------------------------- 2. Build + escaneo + push
+  build:
+    name: Build, escaneo y publicación de la imagen
+    needs: ci
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Calcular nombre y versión de la imagen
+        id: meta
+        run: |
+          VERSION="sha-${GITHUB_SHA::7}"
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY,,}:${VERSION}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}"     >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build local (para escanear antes de publicar)
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          load: true
+          tags: ${{ steps.meta.outputs.image }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Escaneo de vulnerabilidades (bloquea HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar imagen inmutable
+        uses: docker/build-push-action@v6
+        with:
+          context: app
+          push: true
+          tags: ${{ steps.meta.outputs.image }}
+          build-args: APP_VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+
+  # ------------------------------------------------------ 3. Staging (automático)
+  deploy-staging:
+    name: Despliegue en staging
+    needs: build
+    runs-on: [self-hosted, staging]
+    environment: staging
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login al registro
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Generar/actualizar entorno de liberación
+        run: scripts/env/provision.sh staging
+      - name: Desplegar (con rollback automático)
+        run: scripts/deploy/deploy.sh staging "${{ needs.build.outputs.image }}"
+
+  test-staging:
+    name: Pruebas en staging (humo, integración, carga, SLO)
+    needs: [build, deploy-staging]
+    runs-on: [self-hosted, staging]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/tests/run-all.sh staging "${{ needs.build.outputs.version }}"
+
+  # -------------------------------------- 4. Producción (aprobación manual)
+  # El Environment "production" debe tener "Required reviewers" configurado:
+  # el job queda en pausa hasta que un aprobador lo autorice.
+  deploy-production:
+    name: Despliegue en producción
+    needs: [build, test-staging]
+    runs-on: [self-hosted, production]
+    environment: production
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Login al registro
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Generar/actualizar entorno de producción
+        env:
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+        run: scripts/env/provision.sh production
+      - name: Desplegar (con rollback automático)
+        run: scripts/deploy/deploy.sh production "${{ needs.build.outputs.image }}"
+      - name: Verificación posterior (humo + SLO, sin carga)
+        run: scripts/tests/run-all.sh production "${{ needs.build.outputs.version }}" --solo-verificacion

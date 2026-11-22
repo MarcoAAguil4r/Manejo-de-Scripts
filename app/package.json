@@ -1,0 +1,13 @@
+{
+  "name": "talaverashop-api",
+  "version": "1.0.0",
+  "description": "API de TalaveraShop (caso de estudio de liberación y despliegue continuo)",
+  "type": "module",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "lint": "node --check src/server.js && node --check src/app.js && node --check src/metrics.js && node --check src/productos.js",
+    "test": "node --test --test-reporter=spec \"test/**/*.test.js\""
+  }
+}
