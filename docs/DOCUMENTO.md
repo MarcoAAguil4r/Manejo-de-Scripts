@@ -335,9 +335,9 @@ Ejecución local de todo el flujo (requiere Docker): `scripts/pipeline/local-pip
 
 # 9. Evidencia de verificación y alcance
 
-Las pruebas unitarias y de la compuerta SLO pasan localmente; CI también valida lint y pruebas unitarias en GitHub Actions. El build de la imagen se ejecutó en Actions. La corrida anterior detectó 10 vulnerabilidades HIGH en los paquetes de `npm` incluidos en la imagen base; esta versión elimina `npm` y `npx` del runtime y debe confirmarse con una nueva ejecución del escáner.
+Las 13 pruebas unitarias y de la compuerta SLO pasan localmente; CI también pasó lint y pruebas en GitHub Actions. En la última corrida de Actions se construyó la imagen, el escaneo Trivy pasó sin bloquear y la imagen se publicó en GHCR. La imagen de runtime elimina `npm` y `npx`, que originaban los hallazgos HIGH de la corrida anterior.
 
-La aplicación, Prometheus y Grafana todavía deben desplegarse en un servidor con Docker. Para completar la integración real hay que configurar los *Environments* y el secreto de producción, registrar los runners y obtener una corrida exitosa hasta staging y producción. Los niveles de servicio de la sección 4 son objetivos propuestos para aprobación del responsable del servicio.
+La aplicación, Prometheus y Grafana todavía deben desplegarse en un servidor con Docker. Para completar la integración real hay que configurar los *Environments* y el secreto de producción, registrar los runners y obtener una corrida exitosa hasta staging y producción. Las consultas de la compuerta SLO se probaron con respuestas simuladas de Prometheus; deben verificarse contra un Prometheus desplegado. Los niveles de servicio de la sección 4 son objetivos propuestos para aprobación del responsable del servicio.
 
 # 10. Riesgos y mejoras futuras
 
