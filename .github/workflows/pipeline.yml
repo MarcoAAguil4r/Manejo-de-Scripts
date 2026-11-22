@@ -116,9 +116,23 @@ jobs:
     needs: [build, deploy-staging]
     runs-on: [self-hosted, staging]
     timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/tests/run-all.sh staging "${{ needs.build.outputs.version }}"
+      - name: Login al registro
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Ejecutar pruebas de aceptación
+        id: verify-staging
+        continue-on-error: true
+        run: scripts/tests/run-all.sh staging "${{ needs.build.outputs.version }}"
+      - name: Revertir staging si las pruebas fallan
+        if: steps.verify-staging.outcome == 'failure'
+        run: scripts/deploy/rollback.sh staging
+      - name: Marcar staging como fallido
+        if: steps.verify-staging.outcome == 'failure'
+        run: exit 1
 
   # -------------------------------------- 4. Producción (aprobación manual)
   # El Environment "production" debe tener "Required reviewers" configurado:
@@ -143,4 +157,12 @@ jobs:
       - name: Desplegar (con rollback automático)
         run: scripts/deploy/deploy.sh production "${{ needs.build.outputs.image }}"
       - name: Verificación posterior (humo + SLO, sin carga)
+        id: verify-production
+        continue-on-error: true
         run: scripts/tests/run-all.sh production "${{ needs.build.outputs.version }}" --solo-verificacion
+      - name: Revertir producción si falla la verificación posterior
+        if: steps.verify-production.outcome == 'failure'
+        run: scripts/deploy/rollback.sh production
+      - name: Marcar producción como fallida
+        if: steps.verify-production.outcome == 'failure'
+        run: exit 1

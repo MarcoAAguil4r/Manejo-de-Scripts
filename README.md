@@ -41,8 +41,8 @@ http://localhost:8080 (Prometheus 9090, Grafana 3000).
 ## Vincular GitHub Actions con los entornos
 
 1. Subir este repositorio a GitHub (**privado**).
-2. *Settings → Environments*: crear `staging` y `production` (con *Required reviewers* y el
-   secreto `GRAFANA_ADMIN_PASSWORD`).
+2. *Settings → Environments*: crear `staging` sin aprobadores y `production` con
+   *Required reviewers* y el secreto `GRAFANA_ADMIN_PASSWORD`.
 3. En cada servidor con Docker y Node 22:
    `RUNNER_TOKEN=<token> scripts/env/register-runner.sh <owner/repo> <staging|production>`
 4. Hacer push a `main`. El pipeline despliega a staging, ejecuta las pruebas y espera la
