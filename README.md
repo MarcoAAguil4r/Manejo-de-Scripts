@@ -25,8 +25,10 @@ PORT=8099 node src/server.js &           # arrancar la API
 scripts/tests/smoke.sh http://localhost:8099
 node scripts/tests/integration.mjs http://localhost:8099
 node scripts/tests/load.mjs http://localhost:8099 --duration 5
-node scripts/tests/slo-check.mjs http://localhost:8099
 ```
+
+La compuerta SLO consulta las series históricas de Prometheus y se ejecuta como parte de
+`scripts/tests/run-all.sh` en el entorno de liberación.
 
 ## Ejecutar todo el flujo en una máquina con Docker
 

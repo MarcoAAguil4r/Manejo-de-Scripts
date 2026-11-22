@@ -10,6 +10,9 @@ WORKDIR /app
 COPY package.json ./
 COPY src ./src
 
+# npm is only needed in CI; keep its package tree out of the runtime image.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
+
 USER node
 EXPOSE 3000
 

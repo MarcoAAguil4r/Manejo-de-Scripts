@@ -28,7 +28,10 @@ else
 fi
 
 log "4/4 Compuerta de SLO"
-node "$T/slo-check.mjs" "$BASE" \
-  --min-availability "${SLO_MIN_AVAILABILITY:-99.5}" --max-p95-ms "${SLO_MAX_P95_MS:-300}"
+node "$T/slo-check.mjs" \
+  --prometheus-url "http://localhost:${PROM_PORT}" \
+  --window "${SLO_WINDOW:-5m}" \
+  --min-availability "${SLO_MIN_AVAILABILITY:-99.5}" \
+  --max-p95-ms "${SLO_MAX_P95_MS:-300}"
 
 log "Todas las pruebas pasaron en '$1'"

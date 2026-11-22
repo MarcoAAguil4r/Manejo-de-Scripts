@@ -120,8 +120,8 @@ Se distingue entre **SLI** (lo que se mide), **SLO** (el objetivo interno) y **S
 
 | Indicador (SLI) | Cómo se mide | SLO (objetivo interno) | SLA (compromiso) |
 |-----------------|--------------|------------------------|------------------|
-| Disponibilidad | 1 − (respuestas 5xx ÷ total de peticiones), ventana de 30 días | ≥ 99.5% | ≥ 99.0% |
-| Latencia | Percentil 95 de `http_request_duration_seconds` | ≤ 300 ms | ≤ 500 ms |
+| Disponibilidad | 1 − (respuestas 5xx ÷ total de peticiones), ventana de 30 días en Prometheus | ≥ 99.5% | ≥ 99.0% |
+| Latencia | Percentil 95 de `http_request_duration_seconds`, ventana de 30 días en Prometheus | ≤ 300 ms | ≤ 500 ms |
 | Tasa de errores | Respuestas 5xx ÷ total, ventana de 5 min | < 1% | — |
 | Horario de soporte | Atención de incidentes críticos | 24×7 en campañas; 9–18 h L–V fuera de ellas | Igual |
 
@@ -143,9 +143,11 @@ Se distingue entre **SLI** (lo que se mide), **SLO** (el objetivo interno) y **S
 
 ## 4.3 Cómo se hacen cumplir
 
-- **Etapa 4 (staging):** `slo-check.mjs` y `load.mjs` fallan el pipeline si la disponibilidad observada es < 99.5% o el p95 > 300 ms.
-- **Etapa 6 (producción):** la misma compuerta de SLO tras desplegar.
+- **Etapa 4 (staging):** `load.mjs` valida la carga y `slo-check.mjs` compara las series de Prometheus de los últimos 5 min con los umbrales.
+- **Etapa 6 (producción):** `slo-check.mjs` consulta Prometheus para los últimos 30 días; Prometheus conserva 35 días de datos para cubrir la ventana completa.
 - **Operación continua:** reglas de Prometheus (`alert.rules.yml`) que traducen los SLO en alertas.
+
+La compuerta informa como inconclusa y no evalúa disponibilidad/latencia cuando la ventana contiene menos de 20 peticiones; es necesario acumular historial antes de que pueda evaluarse.
 
 # 5. Métricas para el monitoreo de la aplicación
 
@@ -161,10 +163,12 @@ La aplicación expone `/metrics` y Prometheus las recolecta cada 15 s. Se agrupa
 Consultas útiles:
 
 ```promql
-# Disponibilidad (5 min)
-1 - sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))
-# Latencia p95
-histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+# Disponibilidad (30 días)
+1 - sum(increase(http_requests_total{job="talaverashop-app",status=~"5.."}[30d]))
+    / sum(increase(http_requests_total{job="talaverashop-app"}[30d]))
+# Latencia p95 (30 días)
+histogram_quantile(0.95,
+  sum by (le) (rate(http_request_duration_seconds_bucket{job="talaverashop-app"}[30d])))
 ```
 
 ## 5.2 Salud del proceso y del despliegue
@@ -248,6 +252,7 @@ El dashboard **TalaveraShop – RED y SLO** (Grafana, aprovisionado automáticam
 | `APP_VERSION` | Argumento de build, igual a la etiqueta de la imagen |
 | `PORT` | `3000` |
 | `HEALTHCHECK` | cada 10 s, timeout 3 s, inicio 5 s, 3 reintentos |
+| Herramientas de empaquetado en runtime | `npm` y `npx` se eliminan de la imagen final; no hay dependencias de runtime |
 | `.dockerignore` | `node_modules`, `test`, `*.md`, `.git` |
 
 ## 6.5 Docker Compose (`environments/docker-compose.yml`)
@@ -271,7 +276,8 @@ Imágenes con versión fija: `prom/prometheus:v2.55.1` y `grafana/grafana:11.3.0
 | Parámetro | Staging | Producción |
 |-----------|---------|------------|
 | `scrape_interval` / `evaluation_interval` (`PROM_SCRAPE_INTERVAL`) | 15 s | 15 s |
-| Retención (`PROM_RETENTION`) | 7 d | 15 d |
+| Retención (`PROM_RETENTION`) | 7 d | 35 d |
+| Ventana de la compuerta SLO (`SLO_WINDOW`) | 5 min | 30 d |
 | Puerto externo (`PROM_PORT`) | 9091 | 9090 |
 | Objetivo de scraping | `app:3000/metrics` | `app:3000/metrics` |
 | Etiqueta externa `entorno` | `staging` | `production` |
@@ -295,8 +301,9 @@ Imágenes con versión fija: `prom/prometheus:v2.55.1` y `grafana/grafana:11.3.0
 | `LOAD_CONCURRENCY` | 20 | 5* | Usuarios virtuales |
 | `SLO_MIN_AVAILABILITY` | 99.5 | 99.5 | Disponibilidad mínima (%) |
 | `SLO_MAX_P95_MS` | 300 | 300 | Latencia p95 máxima (ms) |
+| `SLO_WINDOW` | 5 min | 30 d | Ventana consultada en la API de Prometheus |
 | Tiempo de espera de salud | 60 s | 60 s | `wait-healthy.sh` |
-| Muestras mínimas del SLO | 20 | 20 | Con menos tráfico la compuerta no se evalúa |
+| Muestras mínimas del SLO | 20 | 20 | Con menos tráfico la compuerta informa que no hay datos suficientes |
 
 \* En producción no se ejecuta la carga ni la integración (`--solo-verificacion`) para no generar pedidos de prueba; los valores se dejan definidos por si se habilita un ensayo controlado.
 
@@ -328,9 +335,9 @@ Ejecución local de todo el flujo (requiere Docker): `scripts/pipeline/local-pip
 
 # 9. Evidencia de verificación y alcance
 
-Lo siguiente se ejecutó y pasó al preparar la entrega: 9 pruebas unitarias de la aplicación; verificación de sintaxis de todos los scripts de shell y Node; validación de sintaxis de los YAML de los workflows, de Compose, de Prometheus y de Grafana, y del JSON del dashboard; y las pruebas de humo, integración, carga (más de 36,000 peticiones en 5 s con 0 errores) y compuerta de SLO contra la aplicación en ejecución.
+Las pruebas unitarias y de la compuerta SLO pasan localmente; CI también valida lint y pruebas unitarias en GitHub Actions. El build de la imagen se ejecutó en Actions. La corrida anterior detectó 10 vulnerabilidades HIGH en los paquetes de `npm` incluidos en la imagen base; esta versión elimina `npm` y `npx` del runtime y debe confirmarse con una nueva ejecución del escáner.
 
-**Lo que aún debe hacerse en el entorno real**, porque requiere recursos del propietario del repositorio: subir el repositorio a GitHub, crear los *Environments* y secretos, registrar los runners en los servidores y ejecutar el pipeline completo. Las etapas de construcción de imagen, escaneo, Compose, Prometheus y Grafana no pudieron ejecutarse en el entorno donde se preparó este material (sin acceso a un daemon de Docker ni a Internet), por lo que su primera ejecución real es la prueba de integración final; los pasos de la sección 7 están pensados para eso.
+La aplicación, Prometheus y Grafana todavía deben desplegarse en un servidor con Docker. Para completar la integración real hay que configurar los *Environments* y el secreto de producción, registrar los runners y obtener una corrida exitosa hasta staging y producción. Los niveles de servicio de la sección 4 son objetivos propuestos para aprobación del responsable del servicio.
 
 # 10. Riesgos y mejoras futuras
 
